@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# Author: Gordon Lam me@gordonlam.space
+# A control script to create Docker swarm infracstrture in local testing environment
+
+# The first parameter to control the action
+action=$1
+
+# Mandatory Tools
+DOCKER=`which docker`
+if [ -z "$DOCKER" ];
+then
+    echo "'docker' was not found on your system." >&2
+    exit 1
+fi
+
+DOCKERCOMPOSE=`which docker-compose`
+if [ -z "$DOCKERCOMPOSE" ];
+then
+    echo "'docker-compose' was not found on your system." >&2
+    exit 1
+fi
+
+DOCKERMACHINE=`which docker-machine`
+if [ -z "$DOCKERMACHINE" ];
+then
+    echo "'docker-machine' was not found on your system." >&2
+    exit 1
+fi
+
+start(){
+    PWD=`pwd`
+    prefix=`basename $PWD`
+    echo -n "Enter the value of swarm node: "
+    read node
+        eval $(docker-machine env -u)
+    docker-machine create --swarm --swarm-master ${prefix}-swarm-master
+    manager_IP=$(docker-machine ip ${prefix}-swarm-master)
+    docker-machine ssh ${prefix}-swarm-master "docker swarm init --advertise-addr ${manager_IP}:2237"
+    MANAGER_TOKEN=$(docker-machine ssh ${prefix}-swarm-master "docker swarm join-token -q worker")
+    while [ $node -gt 0 ]
+    do
+        docker-machine create --swarm ${prefix}-swarm-agent-${node}
+        eval $(docker-machine env ${prefix}-swarm-agent-${node})
+        docker-machine ssh ${prefix}-swarm-agent-$((node--)) "docker swarm join --token ${MANAGER_TOKEN} ${manager_IP}:2377"
+    done
+    docker-machine ls
+
+    eval $(docker-machine env ${prefix}-swarm-master)
+
+    docker info
+}
+
+kill(){
+    PWD=`pwd`
+    prefix=`basename ${PWD}`
+    docker-machine active | grep $prefix | awk '{print $1 }' | xargs docker-machine kill
+    docker-machine ls | grep $prefix | awk '{print $1 }' | xargs docker-machine rm -y
+    docker-machine ls
+    eval $(docker-machine env -u)
+}
+
+eval(){
+    PWD=`pwd`
+    prefix=`basename ${PWD}`
+    eval (docker-machine env docker-machine-swarm-master)
+}
+
+# Action switch
+case "$action" in
+    start)
+    start
+    ;;
+
+    kill)
+    kill
+    ;;
+
+    eval)
+    eval
+    ;;
+
+  *)
+    echo "usage : $0 start | kill | deploy
+    start      Starts the docker swarm nodes and create docker machines
+    kill       Delete all nodes and mahcines
+    eval       Switch shell to master node
+    "
+    ;;
+esac
+
+exit 0
